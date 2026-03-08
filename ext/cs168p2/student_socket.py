@@ -542,7 +542,18 @@ class StudentUSocket(StudentUSocketBase):
     self.bind(dev.ip_addr, 0)
 
     ## Start of Stage 1.1 ##
-
+    # Set next sequence number to initial sequence number (already set in TXControlBlock.__init__)
+    self.snd.nxt = self.snd.iss
+    
+    # Create and send SYN packet (no data)
+    p = self.new_packet(syn=True, ack=False)
+    self.tx(p)
+    
+    # Update state to SYN_SENT
+    self.state = SYN_SENT
+    
+    # Update next sequence number: SYN counts as 1 byte in sequence space
+    self.snd.nxt = self.snd.nxt |PLUS| 1
     ## End of Stage 1.1 ##
 
   def tx(self, p, retxed=False):
@@ -589,7 +600,8 @@ class StudentUSocket(StudentUSocketBase):
     if self.state is CLOSED:
       return
     ## Start of Stage 1.2 ##
-
+    elif self.state is SYN_SENT:
+      self.handle_synsent(seg)
     ## End of Stage 1.2 ##
     elif self.state in (ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2,
                         CLOSE_WAIT, CLOSING, LAST_ACK, TIME_WAIT):
@@ -644,10 +656,25 @@ class StudentUSocket(StudentUSocketBase):
 
     if acceptable_ack:
       ## Start of Stage 1.3 ##
-
+      # Update receive sequence space: next byte expected is seq + 1 (for SYN)
+      self.rcv.nxt = seg.seq |PLUS| 1
+      
+      # Update send sequence space: SYN has been acked
+      self.snd.una = seg.ack
+      
+      # Check if SYN-ACK is acking our SYN
       if self.snd.una |GT| self.snd.iss:
-        pass
-
+        # Set next sequence number to the ack number for our ACK packet
+        self.snd.nxt = seg.ack
+        
+        # Transition to ESTABLISHED state
+        self.state = ESTABLISHED
+        
+        # Express intent to send an ACK
+        self.set_pending_ack()
+        
+        # Update window based on advertised window in SYN-ACK
+        self.update_window(seg)
       ## End of Stage 1.3 ##
 
   def update_rto(self, acked_pkt):
