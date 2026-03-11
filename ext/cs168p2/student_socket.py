@@ -607,7 +607,7 @@ class StudentUSocket(StudentUSocketBase):
                         CLOSE_WAIT, CLOSING, LAST_ACK, TIME_WAIT):
       if self.acceptable_seg(seg, payload):
         ## Start of Stage 2.1 ##
-        self.handle_accepted_seg(seg, payload)
+        self.handle_accepted_seg(seg, payload, p)
         ## End of Stage 2.1 ##
         ## Start of Stage 3.1 ##
         # you may need to remove Stage 2's code.
@@ -618,9 +618,8 @@ class StudentUSocket(StudentUSocketBase):
 
      
     ## Start of Stage 3.2 ##
-    # checking recv queue
-    # Hint: data = packet.app[self.rcv.nxt |MINUS| packet.tcp.seq:]
-
+    # Deliver any buffered packets that may have become in-order
+    self._deliver_from_rx_queue()
     ## End of Stage 3.2 ##
 
     self.maybe_send()
@@ -709,6 +708,25 @@ class StudentUSocket(StudentUSocketBase):
     self.rcv.wnd = self.RX_DATA_MAX - len(self.rx_data)
     self.set_pending_ack()
     ## End of Stage 2.3 ##
+
+  def _deliver_from_rx_queue(self):
+    """
+    Deliver any buffered packets that are now in order.
+    """
+    while not self.rx_queue.empty():
+        seq, pkt = self.rx_queue.peek()
+        if seq |LT| self.rcv.nxt:
+            # This packet is entirely in the past; discard it
+            self.rx_queue.pop()
+            continue
+        if seq |EQ| self.rcv.nxt:
+            self.rx_queue.pop()
+            payload = pkt.app
+            if payload:
+                self.handle_accepted_payload(payload)
+        else:
+            # Packet is still out-of-order; stop processing
+            break
 
   def update_window(self, seg):
     """
@@ -814,10 +832,11 @@ class StudentUSocket(StudentUSocketBase):
 
     return continue_after_ack
 
-  def handle_accepted_seg(self, seg, payload):
+  def handle_accepted_seg(self, seg, payload, pkt=None):
     """
     seg is a TCP segment
     payload is the TCP payload, its type is string
+    pkt is the IP packet (optional)
 
     A segment that arrives here has been cleared by acceptable_seg()
     This is the main function that processes in-order segments
@@ -833,13 +852,23 @@ class StudentUSocket(StudentUSocketBase):
     if not continue_after_ack:
       return
 
-    ## Start of Stage 2.2 ##
+    ## Start of Stage 3.1 ##
     if payload:
         if seg.seq |EQ| self.rcv.nxt:
+            # In-order segment: deliver immediately
             self.handle_accepted_payload(payload)
+            # After delivering, check if buffered packets become deliverable
+            self._deliver_from_rx_queue()
         else:
+            # Out-of-order segment: buffer it if it's not a duplicate
+            # Duplicate check: segment must be within the window and not already past rcv.nxt
+            if seg.seq |GE| self.rcv.nxt:
+                # Buffer the packet (pkt is the IP packet passed from rx)
+                if pkt is not None:
+                    self.rx_queue.push(pkt)
+            # Always send an ACK for received data
             self.set_pending_ack()
-    ## End of Stage 2.2 ##
+    ## End of Stage 3.1 ##
 
     # eight, check FIN bit
     if seg.FIN:
