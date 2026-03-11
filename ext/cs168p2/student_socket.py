@@ -143,7 +143,7 @@ class StudentUSocketBase(object):
     Removes a wake function if it's set
     """
     try:
-      self._wakes.remove(wake)
+      self._wakers.remove(wake)
       return True
     except ValueError:
       return False
@@ -607,9 +607,8 @@ class StudentUSocket(StudentUSocketBase):
                         CLOSE_WAIT, CLOSING, LAST_ACK, TIME_WAIT):
       if self.acceptable_seg(seg, payload):
         ## Start of Stage 2.1 ##
-        
+        self.handle_accepted_seg(seg, payload)
         ## End of Stage 2.1 ##
-        pass
         ## Start of Stage 3.1 ##
         # you may need to remove Stage 2's code.
 
@@ -705,7 +704,10 @@ class StudentUSocket(StudentUSocketBase):
       payload = payload[:rcv.wnd] # Chop to size!
 
     ## Start of Stage 2.3 ##
-
+    self.rx_data += payload
+    self.rcv.nxt = self.rcv.nxt |PLUS| len(payload)
+    self.rcv.wnd = self.RX_DATA_MAX - len(self.rx_data)
+    self.set_pending_ack()
     ## End of Stage 2.3 ##
 
   def update_window(self, seg):
@@ -832,7 +834,11 @@ class StudentUSocket(StudentUSocketBase):
       return
 
     ## Start of Stage 2.2 ##
-
+    if payload:
+        if seg.seq |EQ| self.rcv.nxt:
+            self.handle_accepted_payload(payload)
+        else:
+            self.set_pending_ack()
     ## End of Stage 2.2 ##
 
     # eight, check FIN bit
