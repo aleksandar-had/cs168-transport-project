@@ -683,10 +683,20 @@ class StudentUSocket(StudentUSocketBase):
     """
 
     ## Start of Stage 9.1 ##
+    R = self.stack.now - acked_pkt.tx_ts
 
+    if self.srtt == 0:
+      # RFC 6298 section 2.2: first RTT measurement.
+      self.srtt = R
+      self.rttvar = R / 2
+    else:
+      # RFC 6298 section 2.3: subsequent measurements.
+      self.rttvar = (1 - self.beta) * self.rttvar + self.beta * abs(self.srtt - R)
+      self.srtt = (1 - self.alpha) * self.srtt + self.alpha * R
+
+    self.rto = self.srtt + max(self.G, self.K * self.rttvar)
+    self.rto = min(max(self.rto, self.MIN_RTO), self.MAX_RTO)
     ## End of Stage 9.1 ##
-
-    pass
 
 
   def handle_accepted_payload(self, payload):
@@ -959,7 +969,7 @@ class StudentUSocket(StudentUSocketBase):
       self.tx(p, retxed=True)
 
       ## Start of Stage 9.3 ##
-
+      self.rto = min(self.rto * 2, self.MAX_RTO)
       ## End of Stage 9.3 ##
 
   def set_pending_ack(self):
