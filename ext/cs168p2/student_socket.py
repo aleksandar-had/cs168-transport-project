@@ -564,15 +564,17 @@ class StudentUSocket(StudentUSocketBase):
     p.retxed = retxed
 
     ## Start of Stage 8.1 ##
-    # in Stage 8, you may need to modify what you implemented in Stage 4.
+    if p.tcp.SYN or p.tcp.FIN or p.tcp.payload:
+      # Refresh tx_ts on every (re)transmission so the retx timer
+      # measures time-since-last-send, not time-since-original-send.
+      p.tx_ts = self.stack.now
+      if not retxed:
+        self.retx_queue.push(p)
 
-
-    if (p.tcp.SYN or p.tcp.FIN or p.tcp.payload) and not retxed:
-
-      ## Start of Stage 4.4 ##
-      if p.tcp.payload:
-        self.snd.nxt = self.snd.nxt |PLUS| len(p.tcp.payload)
-      ## End of Stage 4.4 ##
+        ## Start of Stage 4.4 ##
+        if p.tcp.payload:
+          self.snd.nxt = self.snd.nxt |PLUS| len(p.tcp.payload)
+        ## End of Stage 4.4 ##
 
     ## End of Stage 8.1 ##
     
@@ -753,13 +755,12 @@ class StudentUSocket(StudentUSocketBase):
 
 
     ## Start of Stage 8.2 ##
-
+    acked_pkts = self.retx_queue.pop_upto(seg.ack)
     ## End of Stage 8.2 ##
 
 
     ## Start of Stage 9.2 ##
 
-    acked_pkts = [] # remove when implemented
     for (ackno, p) in acked_pkts:
       if not p.retxed:
         self.update_rto(p)
@@ -946,8 +947,11 @@ class StudentUSocket(StudentUSocketBase):
     """
 
     ## Start of Stage 8.3 ##
-    time_in_queue = 0 # modify when implemented
+    if self.retx_queue.empty():
+      return
 
+    seq, p = self.retx_queue.get_earliest_pkt()
+    time_in_queue = self.stack.now - p.tx_ts
     ## End of Stage 8.3 ##
 
     if time_in_queue > self.rto:
