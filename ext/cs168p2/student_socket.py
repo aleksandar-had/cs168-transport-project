@@ -478,16 +478,14 @@ class StudentUSocket(StudentUSocketBase):
       self._delete_tcb()
     elif self.state is ESTABLISHED:
       ## Start of Stage 7.1 ##
-
+      self.fin_ctrl.set_pending(next_state=FIN_WAIT_1)
       ## End of Stage 7.1 ##
-      pass
     elif self.state in (FIN_WAIT_1,FIN_WAIT_2):
       raise RuntimeError("close() is invalid in FIN_WAIT states")
     elif self.state is CLOSE_WAIT:
       ## Start of Stage 6.2 ##
-
+      self.fin_ctrl.set_pending(next_state=LAST_ACK)
       ## End of Stage 6.2 ##
-      pass
     elif self.state in (CLOSING,LAST_ACK,TIME_WAIT):
       raise RuntimeError("connecting closing")
     else:
@@ -781,12 +779,25 @@ class StudentUSocket(StudentUSocketBase):
     self.log.info("Got FIN!")
 
     ## Start of Stage 6.1 ##
-
+    if self.state == ESTABLISHED:
+      self.rcv.nxt = self.rcv.nxt |PLUS| 1
+      self.set_pending_ack()
+      self.state = CLOSE_WAIT
     ## End of Stage 6.1 ##
 
 
     ## Start of Stage 7.2 ##
-
+    if self.state == FIN_WAIT_1:
+      self.rcv.nxt = self.rcv.nxt |PLUS| 1
+      self.set_pending_ack()
+      if self.fin_ctrl.acks_our_fin(seg.ack):
+        self.start_timer_timewait()
+      else:
+        self.state = CLOSING
+    elif self.state == FIN_WAIT_2:
+      self.rcv.nxt = self.rcv.nxt |PLUS| 1
+      self.set_pending_ack()
+      self.start_timer_timewait()
     ## End of Stage 7.2 ##
 
   def check_ack(self, seg):
@@ -822,14 +833,17 @@ class StudentUSocket(StudentUSocketBase):
     ## Start of Stage 6.3 ##
     ## Start of Stage 7.3 ##
     if self.state == FIN_WAIT_1:
-      pass
+      if self.fin_ctrl.acks_our_fin(seg.ack):
+        self.state = FIN_WAIT_2
     elif self.state == FIN_WAIT_2:
       if self.retx_queue.empty():
         self.set_pending_ack()
     elif self.state == CLOSING:
-      pass
+      if self.fin_ctrl.acks_our_fin(seg.ack):
+        self.start_timer_timewait()
     elif self.state == LAST_ACK:
-      pass
+      if self.fin_ctrl.acks_our_fin(seg.ack):
+        self._delete_tcb()
     elif self.state == TIME_WAIT:
       # restart the 2 msl timeout
       self.set_pending_ack()
